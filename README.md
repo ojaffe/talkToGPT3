@@ -1,6 +1,6 @@
 Talk to GPT3 using microphone, get audio response.
 
-### Dependencies
+### Prerequisites
 ```
 openai
 pyttsx3
