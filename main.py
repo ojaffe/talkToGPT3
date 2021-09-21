@@ -5,10 +5,10 @@ import openai
 
 import pyttsx3
 import speech_recognition as sr
-from PyQt5.QtWidgets import QMainWindow, QApplication, QPushButton, QLineEdit, QDesktopWidget, QPlainTextEdit
+from PyQt5.QtWidgets import QMainWindow, QApplication, QPushButton, QDesktopWidget, QPlainTextEdit, \
+    QLineEdit
 
 # initialize Text-to-speech engine
-
 engine = pyttsx3.init()
 
 openai.api_key = ""
@@ -24,6 +24,7 @@ initial_prompt = prompt
 r = sr.Recognizer()
 
 
+# Add '\n\n' before each human or AI dialogue
 def formatPrompt(x):
     indicies = [m.start() for m in re.finditer('-:', x)]
     for y in reversed(indicies):
@@ -34,36 +35,37 @@ def formatPrompt(x):
     return x
 
 
+# Open mic, then decode input voice into text
 def recordAudio():
-    global prompt
 
     with sr.Microphone() as source:
         print("Say something!")
         audio = r.listen(source)
     try:
         userInput = r.recognize_sphinx(audio)
-
-        if userInput != "exit":
-            print("-:" + userInput)
-            prompt += "-:" + userInput
-            prompt += "Val:"
-            response = openai.Completion.create(engine="davinci", prompt=prompt, max_tokens=150, temperature=0,
-                                                stop=["-:"])
-            prompt += response.choices[0]["text"]
-            print("Val:" + response.choices[0]["text"])
-
-            # Play the response
-            engine.say(response.choices[0]["text"])
-            engine.runAndWait()
-
-            print("Ready to record...")
-            return prompt
+        return callGPT(userInput)
 
     except sr.UnknownValueError:
         print("Error: unknown value!")
         exit()
 
 
+# Given human input and current prompt, feed both as one into API, play response as audio then return response
+def callGPT(userInput):
+    global prompt
+    prompt += "-:" + userInput
+    prompt += "Val:"
+    response = openai.Completion.create(engine="davinci", prompt=prompt, max_tokens=150, temperature=0,
+                                        stop=["-:"])
+    prompt += response.choices[0]["text"]
+
+    # Play the response
+    engine.say(response.choices[0]["text"])
+    engine.r
+    return prompt
+
+
+# Interface to control functionality and view conversation history
 class App(QMainWindow):
 
     def __init__(self):
@@ -94,22 +96,44 @@ class App(QMainWindow):
 
         self.stop_button = QPushButton('Exit', self)
         self.stop_button.resize(160, 30)
-        self.stop_button.move(20, 100)
+        self.stop_button.move(20, 390)
         self.stop_button.clicked.connect(app.instance().quit)
 
         # Create textbox
         self.textbox = QPlainTextEdit(self)
-        self.textbox.move(200, 20)
         self.textbox.resize(370, 400)
+        self.textbox.move(200, 20)
+
+        # Type to GPT-3
+        self.text_button = QPushButton('Type to GPT-3', self)
+        self.text_button.resize(160, 30)
+        self.text_button.move(20, 180)
+        self.text_button.clicked.connect(self.typeToGPT3)
+
+        self.typeTextbox = QLineEdit(self)
+        self.typeTextbox.resize(160, 30)
+        self.typeTextbox.move(20, 150)
 
         self.show()
 
     def record(self):
+        self.start_button.setText("recording...")
         new_prompt = recordAudio()
         self.updateTextbox(new_prompt)
+        self.start_button.setText("Start Recording")
+
+    def typeToGPT3(self):
+        new_prompt = callGPT(self.typeTextbox.text())
+        self.updateTextbox(new_prompt)
+
+    def typePopupClicked(self, i):
+        if i.text() == "Apply":
+            print("a")
 
     def deleteConversationHistory(self):
         self.updateTextbox(initial_prompt)
+        global prompt
+        prompt = initial_prompt
 
     def updateTextbox(self, text):
         self.textbox.setPlainText(formatPrompt(text))
@@ -124,8 +148,3 @@ app = QApplication(sys.argv)
 app.setStyle('Fusion')
 ex = App()
 sys.exit(app.exec_())
-
-
-
-
-
