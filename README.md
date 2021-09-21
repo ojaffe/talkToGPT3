@@ -7,4 +7,5 @@ pyttsx3
 PyAudio
 SpeechRecognition
 swig
+PyQt5
 ```
