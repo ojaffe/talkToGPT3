@@ -1,68 +1,92 @@
+from __future__ import division
+
 import re
 import sys
+import os
+from os import environ
+environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 
+from google.cloud import speech, texttospeech
 import openai
-
-import pyttsx3
-import speech_recognition as sr
+from pygame import mixer
 from PyQt5.QtWidgets import QMainWindow, QApplication, QPushButton, QDesktopWidget, QPlainTextEdit, \
     QLineEdit
 
-# initialize Text-to-speech engine
-engine = pyttsx3.init()
+from mic import MicrophoneStream, listen_print_loop
+
+
+# Audio recording parameters
+RATE = 16000
+CHUNK = int(RATE / 10)  # 100ms
 
 openai.api_key = ""
+dir_path = ""
 
-prompt = "The following is a conversation with an AI assistant. The assistant is helpful, creative, clever, " \
-         "and very friendly." \
-         "-:Hello who are you?" \
-         "Val:I am an AI created by OpenAI. How can I help you today?" \
-         "-:What is your name?" \
-         "Val:My name is Val."
+prompt = "The following is a conversation with an AI assistant. The assistant is helpful, creative, clever, and very friendly." \
+         "Human: Hello, who are you?" \
+         "AI: I am an AI created by OpenAI. How can I help you today?"
 initial_prompt = prompt
-
-r = sr.Recognizer()
-
-
-# Add '\n\n' before each human or AI dialogue
-def formatPrompt(x):
-    indicies = [m.start() for m in re.finditer('-:', x)]
-    for y in reversed(indicies):
-        x = x[:y] + '\n\n' + x[y:]
-    indicies = [m.start() for m in re.finditer('Val:', x)]
-    for y in reversed(indicies):
-        x = x[:y] + '\n\n' + x[y:]
-    return x
-
-
-# Open mic, then decode input voice into text
-def recordAudio():
-
-    with sr.Microphone() as source:
-        print("Say something!")
-        audio = r.listen(source)
-    try:
-        userInput = r.recognize_sphinx(audio)
-        return callGPT(userInput)
-
-    except sr.UnknownValueError:
-        print("Error: unknown value!")
-        exit()
 
 
 # Given human input and current prompt, feed both as one into API, play response as audio then return response
 def callGPT(userInput):
     global prompt
-    prompt += "-:" + userInput
-    prompt += "Val:"
-    response = openai.Completion.create(engine="davinci", prompt=prompt, max_tokens=150, temperature=0,
-                                        stop=["-:"])
+    prompt += "Human:" + userInput
+    prompt += "AI:"
+    response = openai.Completion.create(engine="davinci", prompt=prompt, max_tokens=150, temperature=0.6,
+                                        stop=["Human:"])
     prompt += response.choices[0]["text"]
 
-    # Play the response
-    engine.say(response.choices[0]["text"])
-    engine.r
+    # Play response through audio
+    synthesize_and_play_text(response.choices[0]["text"])
+
     return prompt
+
+
+# Add '\n\n' before each human or AI dialogue
+def formatPrompt(x):
+    indicies = [m.start() for m in re.finditer('Human:', x)]
+    for y in reversed(indicies):
+        x = x[:y] + '\n\n' + x[y:]
+    indicies = [m.start() for m in re.finditer('AI:', x)]
+    for y in reversed(indicies):
+        x = x[:y] + '\n\n' + x[y:]
+    return x
+
+
+# Google TTS, then play audio file
+def synthesize_and_play_text(text):
+    client = texttospeech.TextToSpeechClient()
+    input_text = texttospeech.SynthesisInput(text=text)
+
+    voice = texttospeech.VoiceSelectionParams(
+        language_code="en-GB",
+        name="en-GB-Wavenet-B",
+    )
+
+    audio_config = texttospeech.AudioConfig(
+        audio_encoding=texttospeech.AudioEncoding.MP3,
+        pitch=1,
+    )
+
+    response = client.synthesize_speech(
+        request={"input": input_text, "voice": voice, "audio_config": audio_config}
+    )
+
+    # The response's audio_content is binary.
+    with open("output.mp3", "wb") as out:
+        out.write(response.audio_content)
+
+    # Load and play outputted audio
+    mixer.init()
+    mixer.music.load(os.path.join(dir_path, "output.mp3"))
+    mixer.music.play()
+
+    # Wait until audio has finished playing, load dummy audio file so os can delete output
+    while mixer.music.get_busy():
+        pass
+    mixer.music.load(os.path.join(dir_path, "dummy.mp3"))
+    os.remove(os.path.join(dir_path, "output.mp3"))
 
 
 # Interface to control functionality and view conversation history
@@ -77,6 +101,7 @@ class App(QMainWindow):
         self.height = 480
 
         self.initUI()
+
         self.deleteConversationHistory()
 
     def initUI(self):
@@ -117,18 +142,38 @@ class App(QMainWindow):
         self.show()
 
     def record(self):
-        self.start_button.setText("recording...")
-        new_prompt = recordAudio()
-        self.updateTextbox(new_prompt)
-        self.start_button.setText("Start Recording")
+        language_code = "en-US"
+
+        client = speech.SpeechClient()
+        config = speech.RecognitionConfig(
+            encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+            sample_rate_hertz=RATE,
+            language_code=language_code,
+        )
+
+        streaming_config = speech.StreamingRecognitionConfig(
+            config=config, interim_results=True
+        )
+
+        with MicrophoneStream(RATE, CHUNK) as stream:
+            audio_generator = stream.generator()
+            requests = (
+                speech.StreamingRecognizeRequest(audio_content=content)
+                for content in audio_generator
+            )
+
+            responses = client.streaming_recognize(streaming_config, requests)
+
+            # Now, put the transcription responses to use.
+            text = listen_print_loop(responses)
+
+            new_prompt = callGPT(text)
+            self.updateTextbox(new_prompt)
 
     def typeToGPT3(self):
+        self.textbox.setPlainText("")
         new_prompt = callGPT(self.typeTextbox.text())
         self.updateTextbox(new_prompt)
-
-    def typePopupClicked(self, i):
-        if i.text() == "Apply":
-            print("a")
 
     def deleteConversationHistory(self):
         self.updateTextbox(initial_prompt)
